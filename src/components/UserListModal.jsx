@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { X, Search, UserPlus, Phone, ArrowRight, UserCheck } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msg-1-92sg.onrender.com';
 
 export default function UserListModal({ currentUser, onClose, onSelectChat }) {
   const [users, setUsers] = useState([]);

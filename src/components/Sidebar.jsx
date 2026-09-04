@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { sendTestPushNotification } from '@/lib/push';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msg-1-92sg.onrender.com';
 
 export default function Sidebar({
   currentUser,

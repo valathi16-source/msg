@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Phone, User, Key, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msg-1-92sg.onrender.com';
 
 export default function AuthModal({ onLoginSuccess }) {
   const [tab, setTab] = useState('sender'); // 'sender' | 'guest'

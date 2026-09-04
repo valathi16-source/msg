@@ -23,6 +23,8 @@ import {
   Users
 } from 'lucide-react';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msg-1-92sg.onrender.com';
+
 const COMMON_EMOJIS = ['😊', '😂', '😍', '👍', '❤️', '🔥', '🎉', '🙏', '😎', '🙌', '💯', '✨', '👋', '💬', '🚀', '⭐'];
 
 export default function ChatWindow({
@@ -203,6 +205,7 @@ export default function ChatWindow({
         const reader = new FileReader();
         reader.onloadend = async () => {
           const base64 = reader.result;
+          const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msg-1-92sg.onrender.com';
           const isImage = selectedFile.type.startsWith('image/');
           const res = await fetch('/api/upload', {
             method: 'POST',

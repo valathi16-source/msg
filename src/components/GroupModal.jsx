@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { X, Users, Check, UserPlus } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msg-1-92sg.onrender.com';
 
 export default function GroupModal({ currentUser, onClose, onGroupCreated }) {
   const [groupName, setGroupName] = useState('');

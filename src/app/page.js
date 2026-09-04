@@ -11,7 +11,7 @@ import { socket } from '@/lib/socket';
 import { registerPushNotifications } from '@/lib/push';
 import { MessageSquare } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://msg-1-92sg.onrender.com';
 
 const ICE_SERVERS = {
   iceServers: [
