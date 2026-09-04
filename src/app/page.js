@@ -535,6 +535,11 @@ export default function Home() {
       cleanupCall();
     };
 
+    const onSessionTerminated = ({ reason }) => {
+      alert(reason || 'Account logged in from another device. Session terminated.');
+      handleLogout();
+    };
+
     socket.on('online_users_list', onOnlineUsersList);
     socket.on('user_presence', onUserPresence);
     socket.on('group_created', onGroupCreated);
@@ -544,6 +549,7 @@ export default function Home() {
     socket.on('ice_candidate', onIceCandidate);
     socket.on('call_rejected', onCallRejected);
     socket.on('call_ended', onCallEnded);
+    socket.on('session_terminated', onSessionTerminated);
 
     return () => {
       socket.off('connect', onConnect);
@@ -556,6 +562,7 @@ export default function Home() {
       socket.off('ice_candidate', onIceCandidate);
       socket.off('call_rejected', onCallRejected);
       socket.off('call_ended', onCallEnded);
+      socket.off('session_terminated', onSessionTerminated);
     };
   }, [currentUser, fetchChats, cleanupCall]);
 

@@ -581,9 +581,26 @@ io.on('connection', (socket) => {
 
   socket.on('user_connected', ({ userId }) => {
     if (!userId) return;
-    if (!onlineUsers.has(userId)) {
+
+    // Single-User / One-Device Lock per Phone Number:
+    // Terminate existing session if active on another device
+    if (onlineUsers.has(userId)) {
+      const existingSockets = onlineUsers.get(userId);
+      existingSockets.forEach((oldSocketId) => {
+        const oldSocket = io.sockets.sockets.get(oldSocketId);
+        if (oldSocket && oldSocket.id !== socket.id) {
+          console.log(`[Single Device Lock] Terminating session ${oldSocketId} for userId ${userId}`);
+          oldSocket.emit('session_terminated', {
+            reason: 'Account accessed from another device or session.',
+          });
+          oldSocket.disconnect(true);
+        }
+      });
+      existingSockets.clear();
+    } else {
       onlineUsers.set(userId, new Set());
     }
+
     onlineUsers.get(userId).add(socket.id);
     socket.userId = userId;
     socket.join(`user:${userId}`);
