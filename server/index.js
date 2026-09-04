@@ -23,7 +23,6 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
 }));
-app.options('*', cors());
 
 // Increase JSON limit for base64 image/audio uploads
 app.use(express.json({ limit: '50mb' }));
