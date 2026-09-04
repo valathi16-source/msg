@@ -37,7 +37,11 @@ export default function AuthModal({ onLoginSuccess }) {
       setGeneratedOtp(data.otp);
       setStep('verify');
     } catch (err) {
-      setError(err.message);
+      if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+        setError('Cannot connect to backend. Please add NEXT_PUBLIC_API_URL=https://msg-1-92sg.onrender.com in Vercel Settings and redeploy.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -64,7 +68,11 @@ export default function AuthModal({ onLoginSuccess }) {
 
       onLoginSuccess(data.user);
     } catch (err) {
-      setError(err.message);
+      if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+        setError('Cannot connect to backend. Please add NEXT_PUBLIC_API_URL=https://msg-1-92sg.onrender.com in Vercel Settings and redeploy.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -89,7 +97,11 @@ export default function AuthModal({ onLoginSuccess }) {
 
       onLoginSuccess(data.user);
     } catch (err) {
-      setError(err.message);
+      if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+        setError('Cannot connect to backend. Please add NEXT_PUBLIC_API_URL=https://msg-1-92sg.onrender.com in Vercel Settings and redeploy.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
