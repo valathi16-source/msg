@@ -1,0 +1,34 @@
+{
+  "name": "msg",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"node server/index.js\" \"next dev -p 3000\"",
+    "server": "node server/index.js",
+    "dev:next": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@prisma/client": "5.22.0",
+    "concurrently": "^10.0.5",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "lucide-react": "^1.40.0",
+    "next": "16.3.4",
+    "prisma": "5.22.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "tailwindcss": "^4"
+  }
+}
