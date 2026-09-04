@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { Phone, PhoneOff, Video, VideoOff, Mic, MicOff, User } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Phone, PhoneOff, Video, VideoOff, Mic, MicOff } from 'lucide-react';
 
 export default function CallModal({
   callState,
@@ -15,8 +15,25 @@ export default function CallModal({
 }) {
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const remoteAudioRef = useRef(null);
+
+  const [callDuration, setCallDuration] = useState(0);
 
   const { status, callType, peerUser, isMuted, isCameraOff } = callState;
+
+  // Active call duration timer
+  useEffect(() => {
+    let timer;
+    if (status === 'active') {
+      setCallDuration(0);
+      timer = setInterval(() => {
+        setCallDuration((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setCallDuration(0);
+    }
+    return () => clearInterval(timer);
+  }, [status]);
 
   // Bind local stream to local video element
   useEffect(() => {
@@ -30,7 +47,16 @@ export default function CallModal({
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
     }
+    if (remoteAudioRef.current && remoteStream) {
+      remoteAudioRef.current.srcObject = remoteStream;
+    }
   }, [remoteStream]);
+
+  const formatTime = (secs) => {
+    const mins = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${mins}:${s < 10 ? '0' : ''}${s}`;
+  };
 
   if (status === 'idle') return null;
 
@@ -49,11 +75,11 @@ export default function CallModal({
           <p className="text-sm text-emerald-400 font-medium mt-1">
             {status === 'calling' && `Outgoing ${callType === 'video' ? 'Video' : 'Voice'} Call...`}
             {status === 'incoming' && `Incoming ${callType === 'video' ? 'Video' : 'Voice'} Call`}
-            {status === 'active' && `In Call (${callType === 'video' ? 'Video' : 'Voice'})`}
+            {status === 'active' && `In Call (${formatTime(callDuration)})`}
           </p>
         </div>
 
-        {/* Video Containers (for active video call) */}
+        {/* Video Containers (for video calls) */}
         {callType === 'video' && (status === 'active' || status === 'calling') && (
           <div className="relative w-full flex-1 min-h-[260px] bg-black/60 rounded-2xl overflow-hidden my-4 border border-gray-800">
             {/* Remote Video */}
@@ -87,13 +113,12 @@ export default function CallModal({
           </div>
         )}
 
-        {/* Hidden Audio Element for Remote Stream (for voice call) */}
-        {callType === 'audio' && remoteStream && (
+        {/* Audio Element for Remote Stream (for voice call) */}
+        {callType === 'audio' && (
           <audio
-            ref={(node) => {
-              if (node && remoteStream) node.srcObject = remoteStream;
-            }}
+            ref={remoteAudioRef}
             autoPlay
+            playsInline
           />
         )}
 

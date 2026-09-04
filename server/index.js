@@ -15,6 +15,7 @@ const io = new Server(server, {
     origin: '*',
     methods: ['GET', 'POST'],
   },
+  maxHttpBufferSize: 1e8, // 100 MB buffer size for audio/images
 });
 
 app.use(cors({
@@ -22,7 +23,17 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
 }));
-app.use(express.json());
+
+// Increase JSON limit for base64 image/audio uploads
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Serve uploaded files static directory
+const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsDir));
 
 // Setup VAPID Keys (persist to file if not provided via env)
 const vapidFilePath = path.join(__dirname, 'vapid-keys.json');
@@ -36,7 +47,7 @@ if (fs.existsSync(vapidFilePath)) {
 }
 
 webPush.setVapidDetails(
-  'mailto:admin@example.com',
+  'mailto:admin@chatflow.app',
   vapidKeys.publicKey,
   vapidKeys.privateKey
 );
@@ -46,7 +57,7 @@ console.log('VAPID Public Key:', vapidKeys.publicKey);
 // Track online sockets: userId -> Set of socket IDs
 const onlineUsers = new Map();
 
-// Helper to push notification to offline/inactive user
+// Helper to push notification to user
 async function sendPushToUser(userId, payload) {
   try {
     const subscriptions = await prisma.pushSubscription.findMany({
@@ -66,7 +77,6 @@ async function sendPushToUser(userId, payload) {
         .sendNotification(pushSubscription, JSON.stringify(payload))
         .catch(async (err) => {
           if (err.statusCode === 410 || err.statusCode === 404) {
-            // Subscription expired or invalid; delete from DB
             await prisma.pushSubscription.delete({ where: { id: sub.id } });
           } else {
             console.error('Error sending push notification:', err.message);
@@ -91,7 +101,7 @@ app.post('/api/auth/otp-request', async (req, res) => {
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
     let user = await prisma.user.findUnique({ where: { phone } });
 
@@ -112,11 +122,10 @@ app.post('/api/auth/otp-request', async (req, res) => {
       });
     }
 
-    // Return OTP directly in response for local self-hosted zero-cost usage
     res.json({
       success: true,
       message: 'OTP generated successfully',
-      otp, // Exposed for local manual input
+      otp,
       phone: user.phone,
     });
   } catch (err) {
@@ -143,7 +152,6 @@ app.post('/api/auth/otp-verify', async (req, res) => {
       return res.status(400).json({ error: 'OTP code has expired' });
     }
 
-    // Clear OTP
     const updatedUser = await prisma.user.update({
       where: { phone },
       data: { otp: null, otpExpiresAt: null },
@@ -230,7 +238,53 @@ app.post('/api/push/subscribe', async (req, res) => {
   }
 });
 
-// 6. List Users (to start chats)
+// 6. Test Push Notification
+app.post('/api/push/test', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+
+    await sendPushToUser(userId, {
+      title: 'ChatFlow Test Notification',
+      body: '🎉 Web Push Notifications are working perfectly on Chrome!',
+      icon: '/icon-192.png',
+      chatId: 'test',
+    });
+
+    res.json({ success: true, message: 'Test notification triggered' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to test push' });
+  }
+});
+
+// 7. Media Upload API (Base64 or File Upload for Audio/Images)
+app.post('/api/upload', (req, res) => {
+  try {
+    const { fileData, fileName, fileType } = req.body;
+    if (!fileData) return res.status(400).json({ error: 'fileData required' });
+
+    const matches = fileData.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      return res.status(400).json({ error: 'Invalid base64 string' });
+    }
+
+    const ext = fileName ? path.extname(fileName) : fileType?.includes('audio') ? '.webm' : '.png';
+    const safeName = `media_${Date.now()}_${Math.random().toString(36).substr(2, 6)}${ext}`;
+    const filePath = path.join(uploadsDir, safeName);
+
+    const buffer = Buffer.from(matches[2], 'base64');
+    fs.writeFileSync(filePath, buffer);
+
+    const publicUrl = `/uploads/${safeName}`;
+    res.json({ success: true, url: publicUrl });
+  } catch (err) {
+    console.error('Upload error:', err);
+    res.status(500).json({ error: 'Failed to upload file' });
+  }
+});
+
+// 8. List Users
 app.get('/api/users', async (req, res) => {
   try {
     const { currentUserId } = req.query;
@@ -246,7 +300,7 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// 7. List Chats for User
+// 9. List Chats for User
 app.get('/api/chats', async (req, res) => {
   try {
     const { userId } = req.query;
@@ -283,7 +337,7 @@ app.get('/api/chats', async (req, res) => {
   }
 });
 
-// 8. Create or Get Chat
+// 10. Create or Get 1-on-1 Chat
 app.post('/api/chats', async (req, res) => {
   try {
     const { currentUserId, targetUserId } = req.body;
@@ -291,7 +345,6 @@ app.post('/api/chats', async (req, res) => {
       return res.status(400).json({ error: 'currentUserId and targetUserId required' });
     }
 
-    // Check if chat already exists
     const existingChat = await prisma.chat.findFirst({
       where: {
         isGroup: false,
@@ -319,7 +372,6 @@ app.post('/api/chats', async (req, res) => {
       return res.json({ chat: existingChat });
     }
 
-    // Create new Chat
     const chat = await prisma.chat.create({
       data: {
         isGroup: false,
@@ -346,16 +398,61 @@ app.post('/api/chats', async (req, res) => {
   }
 });
 
-// Shared Helper to Save & Broadcast Message
-async function createAndBroadcastMessage({ chatId, senderId, content }) {
-  if (!chatId || !senderId || !content) return null;
+// 11. Create Group Chat
+app.post('/api/chats/group', async (req, res) => {
+  try {
+    const { name, creatorId, participantIds } = req.body;
+    if (!name || !creatorId || !Array.isArray(participantIds) || participantIds.length === 0) {
+      return res.status(400).json({ error: 'Group name, creatorId, and participantIds required' });
+    }
 
-  // 1. Save to DB
+    const uniqueUserIds = Array.from(new Set([creatorId, ...participantIds]));
+
+    const groupChat = await prisma.chat.create({
+      data: {
+        name,
+        isGroup: true,
+        creatorId,
+        participants: {
+          create: uniqueUserIds.map((id) => ({ userId: id })),
+        },
+      },
+      include: {
+        participants: {
+          include: {
+            user: {
+              select: { id: true, name: true, phone: true, isGuest: true },
+            },
+          },
+        },
+        messages: true,
+      },
+    });
+
+    // Notify all participants about new group creation via socket
+    uniqueUserIds.forEach((uid) => {
+      io.to(`user:${uid}`).emit('group_created', groupChat);
+    });
+
+    res.json({ chat: groupChat });
+  } catch (err) {
+    console.error('Failed to create group chat:', err);
+    res.status(500).json({ error: 'Failed to create group chat' });
+  }
+});
+
+// Shared Helper to Save & Broadcast Message
+async function createAndBroadcastMessage({ chatId, senderId, content, type = 'TEXT', mediaUrl = null, duration = null }) {
+  if (!chatId || !senderId || (type === 'TEXT' && !content)) return null;
+
   const message = await prisma.message.create({
     data: {
       chatId,
       senderId,
-      content,
+      content: content || (type === 'AUDIO' ? '🎵 Voice Note' : type === 'IMAGE' ? '📷 Photo' : '📁 File'),
+      type,
+      mediaUrl,
+      duration: duration ? parseInt(duration) : null,
       status: 'SENT',
     },
     include: {
@@ -365,16 +462,15 @@ async function createAndBroadcastMessage({ chatId, senderId, content }) {
     },
   });
 
-  // Update chat updatedAt timestamp
   await prisma.chat.update({
     where: { id: chatId },
     data: { updatedAt: new Date() },
   });
 
-  // 2. Broadcast message to chat room
+  // Broadcast message to chat room
   io.to(chatId).emit('new_message', message);
 
-  // 3. Find recipients & send Push Notification if inactive / offline
+  // Broadcast & push notify participants
   const chat = await prisma.chat.findUnique({
     where: { id: chatId },
     include: {
@@ -384,21 +480,18 @@ async function createAndBroadcastMessage({ chatId, senderId, content }) {
 
   if (chat) {
     for (const p of chat.participants) {
-      // Emit to individual participant room so sidebar updates live
       io.to(`user:${p.userId}`).emit('new_message', message);
 
       if (p.userId !== senderId) {
-        // Mark as DELIVERED in DB
         await prisma.message.update({
           where: { id: message.id },
           data: { status: 'DELIVERED' },
         });
         io.to(chatId).emit('message_status_update', { messageId: message.id, status: 'DELIVERED' });
 
-        // Trigger Web Push Notification
         const pushPayload = {
-          title: message.sender.name || 'New Message',
-          body: content,
+          title: chat.isGroup ? `${chat.name} (${message.sender.name})` : message.sender.name || 'New Message',
+          body: type === 'TEXT' ? message.content : type === 'AUDIO' ? '🎵 Voice Note' : '📷 Photo Attachment',
           icon: '/icon-192.png',
           chatId,
           senderId,
@@ -411,7 +504,7 @@ async function createAndBroadcastMessage({ chatId, senderId, content }) {
   return message;
 }
 
-// 9. Get Messages in Chat
+// 12. Get Messages in Chat
 app.get('/api/chats/:chatId/messages', async (req, res) => {
   try {
     const { chatId } = req.params;
@@ -432,15 +525,15 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
   }
 });
 
-// 10. Post Message in Chat (REST fallback)
+// 13. Post Message in Chat (REST API)
 app.post('/api/chats/:chatId/messages', async (req, res) => {
   try {
     const { chatId } = req.params;
-    const { senderId, content } = req.body;
+    const { senderId, content, type, mediaUrl, duration } = req.body;
 
-    const message = await createAndBroadcastMessage({ chatId, senderId, content });
+    const message = await createAndBroadcastMessage({ chatId, senderId, content, type, mediaUrl, duration });
     if (!message) {
-      return res.status(400).json({ error: 'senderId and content are required' });
+      return res.status(400).json({ error: 'Invalid message details' });
     }
 
     res.json({ success: true, message });
@@ -450,13 +543,11 @@ app.post('/api/chats/:chatId/messages', async (req, res) => {
   }
 });
 
-
 // ---------------- SOCKET.IO REAL-TIME ----------------
 
 io.on('connection', (socket) => {
   console.log('Socket connected:', socket.id);
 
-  // Authenticate socket user
   socket.on('user_connected', ({ userId }) => {
     if (!userId) return;
     if (!onlineUsers.has(userId)) {
@@ -466,24 +557,22 @@ io.on('connection', (socket) => {
     socket.userId = userId;
     socket.join(`user:${userId}`);
 
-    // Send full current online users list to this newly connected user!
     const onlineUserIds = Array.from(onlineUsers.keys());
     socket.emit('online_users_list', { onlineUserIds });
-
-    // Broadcast to everyone else that this user is online
     io.emit('user_presence', { userId, status: 'online' });
   });
 
   socket.on('join_room', ({ chatId }) => {
-    socket.join(chatId);
-    console.log(`Socket ${socket.id} joined room ${chatId}`);
+    if (chatId) {
+      socket.join(chatId);
+      console.log(`Socket ${socket.id} joined room ${chatId}`);
+    }
   });
 
   socket.on('leave_room', ({ chatId }) => {
-    socket.leave(chatId);
+    if (chatId) socket.leave(chatId);
   });
 
-  // Typing status
   socket.on('typing', ({ chatId, userId, name }) => {
     socket.to(chatId).emit('user_typing', { chatId, userId, name });
   });
@@ -492,16 +581,14 @@ io.on('connection', (socket) => {
     socket.to(chatId).emit('user_stop_typing', { chatId, userId });
   });
 
-  // Send message
-  socket.on('send_message', async ({ chatId, senderId, content }) => {
+  socket.on('send_message', async ({ chatId, senderId, content, type, mediaUrl, duration }) => {
     try {
-      await createAndBroadcastMessage({ chatId, senderId, content });
+      await createAndBroadcastMessage({ chatId, senderId, content, type, mediaUrl, duration });
     } catch (err) {
       console.error('Error handling send_message:', err);
     }
   });
 
-  // Mark messages as READ
   socket.on('mark_read', async ({ chatId, userId }) => {
     try {
       if (!chatId || !userId) return;
@@ -523,30 +610,30 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ---------------- WebRTC Signaling Handlers ----------------
+  // ---------------- Targeted WebRTC Signaling Handlers ----------------
 
   socket.on('call_user', ({ chatId, targetUserId, callerId, callerName, offer, callType }) => {
-    console.log(`[WebRTC] Call from ${callerName} (${callerId}) to ${targetUserId}`);
-    io.emit('incoming_call', { targetUserId, callerId, callerName, offer, callType, chatId });
+    console.log(`[WebRTC] Targeted Call from ${callerName} (${callerId}) to user:${targetUserId}`);
+    io.to(`user:${targetUserId}`).emit('incoming_call', { targetUserId, callerId, callerName, offer, callType, chatId });
   });
 
   socket.on('answer_call', ({ chatId, targetUserId, answer }) => {
-    console.log(`[WebRTC] Call answered for ${targetUserId}`);
-    io.emit('call_answered', { targetUserId, answer });
+    console.log(`[WebRTC] Targeted Call Answered for user:${targetUserId}`);
+    io.to(`user:${targetUserId}`).emit('call_answered', { targetUserId, answer });
   });
 
   socket.on('ice_candidate', ({ chatId, targetUserId, candidate }) => {
-    io.emit('ice_candidate', { targetUserId, candidate });
+    io.to(`user:${targetUserId}`).emit('ice_candidate', { targetUserId, candidate });
   });
 
   socket.on('reject_call', ({ chatId, targetUserId }) => {
-    console.log(`[WebRTC] Call rejected for ${targetUserId}`);
-    io.emit('call_rejected', { targetUserId });
+    console.log(`[WebRTC] Targeted Call Rejected for user:${targetUserId}`);
+    io.to(`user:${targetUserId}`).emit('call_rejected', { targetUserId });
   });
 
   socket.on('end_call', ({ chatId, targetUserId }) => {
-    console.log(`[WebRTC] Call ended for ${targetUserId}`);
-    io.emit('call_ended', { targetUserId });
+    console.log(`[WebRTC] Targeted Call Ended for user:${targetUserId}`);
+    io.to(`user:${targetUserId}`).emit('call_ended', { targetUserId });
   });
 
   socket.on('disconnect', () => {

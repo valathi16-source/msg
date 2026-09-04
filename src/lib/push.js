@@ -67,3 +67,20 @@ export async function registerPushNotifications(userId, serverUrl = '') {
     return { success: false, error: err.message };
   }
 }
+
+export async function sendTestPushNotification(userId, serverUrl = '') {
+  try {
+    const res = await fetch(`${serverUrl}/api/push/test`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
+      body: JSON.stringify({ userId }),
+    });
+    return await res.json();
+  } catch (err) {
+    console.error('Test push error:', err);
+    return { success: false, error: err.message };
+  }
+}

@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import ChatWindow from '@/components/ChatWindow';
 import AuthModal from '@/components/AuthModal';
 import UserListModal from '@/components/UserListModal';
+import GroupModal from '@/components/GroupModal';
 import CallModal from '@/components/CallModal';
 import { socket } from '@/lib/socket';
 import { registerPushNotifications } from '@/lib/push';
@@ -16,6 +17,9 @@ const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
 };
 
@@ -27,6 +31,7 @@ export default function Home() {
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [typingMap, setTypingMap] = useState({});
   const [showUserModal, setShowUserModal] = useState(false);
+  const [showGroupModal, setShowGroupModal] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
@@ -44,12 +49,8 @@ export default function Home() {
   const [remoteStream, setRemoteStream] = useState(null);
 
   const pcRef = useRef(null);
-  const callStateRef = useRef(callState);
-  useEffect(() => {
-    callStateRef.current = callState;
-  }, [callState]);
+  const pendingIceCandidatesRef = useRef([]);
 
-  // Ref to hold activeChat to avoid stale closures in socket callbacks
   const activeChatRef = useRef(activeChat);
   useEffect(() => {
     activeChatRef.current = activeChat;
@@ -134,7 +135,7 @@ export default function Home() {
       if (activeChatRef.current?.id) {
         fetchMessages(activeChatRef.current.id);
       }
-    }, 3000);
+    }, 4000);
 
     return () => clearInterval(interval);
   }, [currentUser, fetchChats, fetchMessages]);
@@ -157,7 +158,7 @@ export default function Home() {
     }
   }, []);
 
-  // Clean up WebRTC peer connection
+  // Clean up WebRTC peer connection & stream tracks
   const cleanupCall = useCallback(() => {
     if (pcRef.current) {
       pcRef.current.close();
@@ -169,6 +170,7 @@ export default function Home() {
       setLocalStream(null);
     }
 
+    pendingIceCandidatesRef.current = [];
     setRemoteStream(null);
     setCallState({
       status: 'idle',
@@ -203,6 +205,19 @@ export default function Home() {
     return pc;
   }, []);
 
+  // Flush pending queued ICE candidates once remote description is ready
+  const flushPendingIceCandidates = async () => {
+    if (!pcRef.current || !pcRef.current.remoteDescription) return;
+    while (pendingIceCandidatesRef.current.length > 0) {
+      const candidate = pendingIceCandidatesRef.current.shift();
+      try {
+        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error('Error adding queued ICE candidate:', err);
+      }
+    }
+  };
+
   // Start Outgoing Call
   const handleStartCall = async (type) => {
     if (!activeChat || !currentUser) return;
@@ -214,7 +229,6 @@ export default function Home() {
       return;
     }
 
-    // Show calling overlay immediately for 0ms latency UI response
     setCallState({
       status: 'calling',
       callType: type,
@@ -248,7 +262,7 @@ export default function Home() {
       });
     } catch (err) {
       console.error('Failed to get media stream for call:', err);
-      alert('Microphone or Camera access required for calling. Please ensure you are opening the HTTPS ngrok link.');
+      alert('Microphone or Camera access required for calling.');
       cleanupCall();
     }
   };
@@ -270,6 +284,8 @@ export default function Home() {
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      await flushPendingIceCandidates();
+
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
@@ -349,14 +365,12 @@ export default function Home() {
     socket.on('connect', onConnect);
     fetchChats(currentUser.id);
 
-    // Socket Event: Online Users List
     const onOnlineUsersList = ({ onlineUserIds }) => {
       if (Array.isArray(onlineUserIds)) {
         setOnlineUsers(new Set(onlineUserIds));
       }
     };
 
-    // Socket Event: Presence
     const onUserPresence = ({ userId, status }) => {
       setOnlineUsers((prev) => {
         const next = new Set(prev);
@@ -366,11 +380,15 @@ export default function Home() {
       });
     };
 
+    const onGroupCreated = (groupChat) => {
+      fetchChats(currentUser.id);
+    };
+
     // Socket Event: New Message
     const onNewMessage = (newMsg) => {
       const currentActive = activeChatRef.current;
 
-      // Trigger Chrome native pop-up notification and sound chime
+      // Sound chime + Notification for incoming messages
       if (newMsg.senderId !== currentUser.id) {
         try {
           const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -389,41 +407,46 @@ export default function Home() {
           console.error(e);
         }
 
-        if (typeof window !== 'undefined' && 'Notification' in window) {
-          if (Notification.permission === 'granted') {
-            try {
-              if ('serviceWorker' in navigator && navigator.serviceWorker) {
-                navigator.serviceWorker.ready.then((reg) => {
-                  reg.showNotification(newMsg.sender?.name || 'New Message', {
-                    body: newMsg.content,
-                    icon: '/icon-192.png',
-                    badge: '/icon-192.png',
-                    tag: newMsg.chatId,
-                    vibrate: [200, 100, 200],
-                  });
-                }).catch(() => {
-                  new Notification(newMsg.sender?.name || 'New Message', {
-                    body: newMsg.content,
-                    icon: '/icon-192.png',
-                    tag: newMsg.chatId,
-                  });
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+          try {
+            if ('serviceWorker' in navigator && navigator.serviceWorker) {
+              navigator.serviceWorker.ready.then((reg) => {
+                reg.showNotification(newMsg.sender?.name || 'New Message', {
+                  body: newMsg.type === 'TEXT' ? newMsg.content : newMsg.type === 'AUDIO' ? '🎵 Voice Note' : '📷 Photo Attachment',
+                  icon: '/icon-192.png',
+                  badge: '/icon-192.png',
+                  tag: newMsg.chatId,
+                  vibrate: [200, 100, 200],
                 });
-              } else {
+              }).catch(() => {
                 new Notification(newMsg.sender?.name || 'New Message', {
                   body: newMsg.content,
                   icon: '/icon-192.png',
                   tag: newMsg.chatId,
                 });
-              }
-            } catch (e) {
-              console.error('Notification display error:', e);
+              });
+            } else {
+              new Notification(newMsg.sender?.name || 'New Message', {
+                body: newMsg.content,
+                icon: '/icon-192.png',
+                tag: newMsg.chatId,
+              });
             }
+          } catch (e) {
+            console.error('Notification error:', e);
           }
         }
       }
 
       if (currentActive && newMsg.chatId === currentActive.id) {
         setMessages((prev) => {
+          // Replace temp optimistic message if sender match, or append
+          const tempIdx = prev.findIndex((m) => m.id.startsWith('temp-') && m.senderId === newMsg.senderId && m.content === newMsg.content);
+          if (tempIdx !== -1) {
+            const copy = [...prev];
+            copy[tempIdx] = newMsg;
+            return copy;
+          }
           if (prev.some((m) => m.id === newMsg.id)) return prev;
           return [...prev, newMsg];
         });
@@ -436,7 +459,6 @@ export default function Home() {
       fetchChats(currentUser.id);
     };
 
-    // WebRTC Socket Listeners: Incoming Call
     const onIncomingCall = ({ targetUserId, callerId, callerName, offer, callType }) => {
       if (targetUserId !== currentUser.id || callerId === currentUser.id) return;
 
@@ -465,37 +487,6 @@ export default function Home() {
         console.error('Ringtone error:', e);
       }
 
-      // Trigger Browser Notification Pop-up for Incoming Call
-      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-        try {
-          if ('serviceWorker' in navigator && navigator.serviceWorker) {
-            navigator.serviceWorker.ready.then((reg) => {
-              reg.showNotification(`Incoming ${callType === 'video' ? 'Video' : 'Voice'} Call`, {
-                body: `${callerName} is calling you...`,
-                icon: '/icon-192.png',
-                badge: '/icon-192.png',
-                tag: 'incoming-call',
-                vibrate: [500, 250, 500, 250, 500],
-              });
-            }).catch(() => {
-              new Notification(`Incoming ${callType === 'video' ? 'Video' : 'Voice'} Call`, {
-                body: `${callerName} is calling you...`,
-                icon: '/icon-192.png',
-                tag: 'incoming-call',
-              });
-            });
-          } else {
-            new Notification(`Incoming ${callType === 'video' ? 'Video' : 'Voice'} Call`, {
-              body: `${callerName} is calling you...`,
-              icon: '/icon-192.png',
-              tag: 'incoming-call',
-            });
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      }
-
       setCallState({
         status: 'incoming',
         callType,
@@ -511,6 +502,7 @@ export default function Home() {
       if (pcRef.current) {
         try {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+          await flushPendingIceCandidates();
           setCallState((prev) => ({ ...prev, status: 'active' }));
         } catch (err) {
           console.error('Error setting remote description:', err);
@@ -520,12 +512,15 @@ export default function Home() {
 
     const onIceCandidate = async ({ targetUserId, candidate }) => {
       if (targetUserId !== currentUser.id) return;
-      if (pcRef.current) {
+      if (pcRef.current && pcRef.current.remoteDescription) {
         try {
           await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (err) {
           console.error('Error adding ICE candidate:', err);
         }
+      } else {
+        // Queue ICE candidate until remote description is set
+        pendingIceCandidatesRef.current.push(candidate);
       }
     };
 
@@ -542,6 +537,7 @@ export default function Home() {
 
     socket.on('online_users_list', onOnlineUsersList);
     socket.on('user_presence', onUserPresence);
+    socket.on('group_created', onGroupCreated);
     socket.on('new_message', onNewMessage);
     socket.on('incoming_call', onIncomingCall);
     socket.on('call_answered', onCallAnswered);
@@ -553,6 +549,7 @@ export default function Home() {
       socket.off('connect', onConnect);
       socket.off('online_users_list', onOnlineUsersList);
       socket.off('user_presence', onUserPresence);
+      socket.off('group_created', onGroupCreated);
       socket.off('new_message', onNewMessage);
       socket.off('incoming_call', onIncomingCall);
       socket.off('call_answered', onCallAnswered);
@@ -575,51 +572,67 @@ export default function Home() {
     socket.emit('mark_read', { chatId: chat.id, userId: currentUser.id });
   };
 
-  // Handle Send Message
-  const handleSendMessage = async (content) => {
+  // Handle Send Message (Streamlined single-path delivery)
+  const handleSendMessage = async (msgData) => {
     if (!activeChat || !currentUser) return;
+
+    const textContent = typeof msgData === 'string' ? msgData : msgData.content;
+    const type = typeof msgData === 'object' ? msgData.type || 'TEXT' : 'TEXT';
+    const mediaUrl = typeof msgData === 'object' ? msgData.mediaUrl : null;
+    const duration = typeof msgData === 'object' ? msgData.duration : null;
 
     const tempMsg = {
       id: 'temp-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
       chatId: activeChat.id,
       senderId: currentUser.id,
-      content,
+      content: textContent,
+      type,
+      mediaUrl,
+      duration,
       status: 'SENT',
       createdAt: new Date().toISOString(),
       sender: { id: currentUser.id, name: currentUser.name, isGuest: currentUser.isGuest },
     };
 
+    // Optimistic UI insert
     setMessages((prev) => [...prev, tempMsg]);
 
     if (socket.connected) {
       socket.emit('send_message', {
         chatId: activeChat.id,
         senderId: currentUser.id,
-        content,
+        content: textContent,
+        type,
+        mediaUrl,
+        duration,
       });
-    }
-
-    try {
-      const res = await fetch(`${API_BASE}/api/chats/${activeChat.id}/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
-        body: JSON.stringify({
-          senderId: currentUser.id,
-          content,
-        }),
-      });
-      const data = await res.json();
-      if (data.message) {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === tempMsg.id ? data.message : m))
-        );
-        fetchChats(currentUser.id);
+    } else {
+      // REST Fallback if socket is disconnected
+      try {
+        const res = await fetch(`${API_BASE}/api/chats/${activeChat.id}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'ngrok-skip-browser-warning': 'true',
+          },
+          body: JSON.stringify({
+            senderId: currentUser.id,
+            content: textContent,
+            type,
+            mediaUrl,
+            duration,
+          }),
+        });
+        const data = await res.json();
+        if (data.message) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === tempMsg.id ? data.message : m))
+          );
+          fetchChats(currentUser.id);
+        }
+      } catch (err) {
+        console.error('REST message fallback error:', err);
       }
-    } catch (err) {
-      console.error('REST message fallback error:', err);
     }
   };
 
@@ -662,6 +675,7 @@ export default function Home() {
               activeChat={activeChat}
               onSelectChat={handleSelectChat}
               onOpenNewChatModal={() => setShowUserModal(true)}
+              onOpenGroupModal={() => setShowGroupModal(true)}
               onEnablePush={handleEnablePush}
               pushEnabled={pushEnabled}
               onLogout={handleLogout}
@@ -690,14 +704,22 @@ export default function Home() {
                 </div>
                 <h2 className="text-2xl font-bold text-white mb-2">Self-Hosted PWA Messaging</h2>
                 <p className="text-xs text-gray-400 max-w-sm leading-relaxed mb-6">
-                  Select a conversation from the sidebar or start a new chat to send real-time Web Push notified messages & 1-on-1 audio/video calls.
+                  Select a conversation from the sidebar or start a new chat to send real-time text, voice notes, photos & 1-on-1 audio/video calls.
                 </p>
-                <button
-                  onClick={() => setShowUserModal(true)}
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-sm transition-all shadow-lg shadow-emerald-900/40"
-                >
-                  Start New Chat
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowUserModal(true)}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-sm transition-all shadow-lg shadow-emerald-900/40"
+                  >
+                    Start New Chat
+                  </button>
+                  <button
+                    onClick={() => setShowGroupModal(true)}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl text-sm transition-all shadow-lg shadow-indigo-900/40"
+                  >
+                    Create Group
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -716,12 +738,24 @@ export default function Home() {
         onToggleCamera={handleToggleCamera}
       />
 
-      {/* New Chat Picker Modal */}
+      {/* New 1-on-1 Chat Picker Modal */}
       {showUserModal && currentUser && (
         <UserListModal
           currentUser={currentUser}
           onClose={() => setShowUserModal(false)}
           onSelectChat={handleSelectChat}
+        />
+      )}
+
+      {/* New Group Chat Picker Modal */}
+      {showGroupModal && currentUser && (
+        <GroupModal
+          currentUser={currentUser}
+          onClose={() => setShowGroupModal(false)}
+          onGroupCreated={(groupChat) => {
+            fetchChats(currentUser.id);
+            handleSelectChat(groupChat);
+          }}
         />
       )}
 
