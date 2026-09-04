@@ -1,3 +1,5 @@
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
@@ -11,7 +13,7 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
-export async function registerPushNotifications(userId, serverUrl = '') {
+export async function registerPushNotifications(userId, serverUrl = API_BASE) {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
     console.warn('Push messaging is not supported in this environment.');
     return { success: false, reason: 'unsupported' };
@@ -28,9 +30,18 @@ export async function registerPushNotifications(userId, serverUrl = '') {
     await navigator.serviceWorker.ready;
 
     // Fetch VAPID Public Key from server
-    const res = await fetch(`${serverUrl}/api/push/vapid-key`, {
+    const targetUrl = serverUrl ? `${serverUrl}/api/push/vapid-key` : '/api/push/vapid-key';
+    const res = await fetch(targetUrl, {
       headers: { 'ngrok-skip-browser-warning': 'true' },
     });
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || !contentType.includes('application/json')) {
+      const text = await res.text();
+      console.error('Server non-JSON response:', text);
+      throw new Error(`Server returned HTML error (${res.status}). Set NEXT_PUBLIC_API_URL on Vercel to your Render backend URL.`);
+    }
+
     const { publicKey } = await res.json();
 
     if (!publicKey) {
@@ -48,7 +59,8 @@ export async function registerPushNotifications(userId, serverUrl = '') {
     }
 
     // Send subscription to server
-    await fetch(`${serverUrl}/api/push/subscribe`, {
+    const subTargetUrl = serverUrl ? `${serverUrl}/api/push/subscribe` : '/api/push/subscribe';
+    await fetch(subTargetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -68,9 +80,10 @@ export async function registerPushNotifications(userId, serverUrl = '') {
   }
 }
 
-export async function sendTestPushNotification(userId, serverUrl = '') {
+export async function sendTestPushNotification(userId, serverUrl = API_BASE) {
   try {
-    const res = await fetch(`${serverUrl}/api/push/test`, {
+    const targetUrl = serverUrl ? `${serverUrl}/api/push/test` : '/api/push/test';
+    const res = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -78,6 +91,17 @@ export async function sendTestPushNotification(userId, serverUrl = '') {
       },
       body: JSON.stringify({ userId }),
     });
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || !contentType.includes('application/json')) {
+      const text = await res.text();
+      console.error('Test push non-JSON response:', text);
+      return {
+        success: false,
+        error: `Backend unreachable (${res.status}). Please set NEXT_PUBLIC_API_URL environment variable in Vercel settings to point to your Render backend URL.`,
+      };
+    }
+
     return await res.json();
   } catch (err) {
     console.error('Test push error:', err);

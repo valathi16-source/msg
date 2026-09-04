@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { sendTestPushNotification } from '@/lib/push';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+
 export default function Sidebar({
   currentUser,
   chats,
@@ -62,7 +64,7 @@ export default function Sidebar({
   const handleTestPush = async () => {
     setTestingPush(true);
     try {
-      const res = await sendTestPushNotification(currentUser.id);
+      const res = await sendTestPushNotification(currentUser.id, API_BASE);
       if (res.success) {
         alert('Test notification sent! Check your Chrome notifications pop-up.');
       } else {
