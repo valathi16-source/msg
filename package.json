@@ -6,7 +6,8 @@
     "dev": "concurrently \"node server/index.js\" \"next dev -p 3000\"",
     "server": "node server/index.js",
     "dev:next": "next dev",
-    "build": "next build",
+    "postinstall": "prisma generate",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint"
   },
