@@ -35,15 +35,24 @@ if (!fs.existsSync(uploadsDir)) {
 }
 app.use('/uploads', express.static(uploadsDir));
 
-// Setup VAPID Keys (persist to file if not provided via env)
+// Setup VAPID Keys (check env vars first, then fallback to file/generation)
 const vapidFilePath = path.join(__dirname, 'vapid-keys.json');
 let vapidKeys;
 
-if (fs.existsSync(vapidFilePath)) {
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  vapidKeys = {
+    publicKey: process.env.VAPID_PUBLIC_KEY,
+    privateKey: process.env.VAPID_PRIVATE_KEY,
+  };
+} else if (fs.existsSync(vapidFilePath)) {
   vapidKeys = JSON.parse(fs.readFileSync(vapidFilePath, 'utf8'));
 } else {
   vapidKeys = webPush.generateVAPIDKeys();
-  fs.writeFileSync(vapidFilePath, JSON.stringify(vapidKeys, null, 2));
+  try {
+    fs.writeFileSync(vapidFilePath, JSON.stringify(vapidKeys, null, 2));
+  } catch (e) {
+    console.warn('Could not write vapid-keys.json locally:', e.message);
+  }
 }
 
 webPush.setVapidDetails(
