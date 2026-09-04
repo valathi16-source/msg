@@ -337,12 +337,34 @@ app.get('/api/chats', async (req, res) => {
   }
 });
 
-// 10. Create or Get 1-on-1 Chat
+// 10. Create or Get 1-on-1 Chat (by targetUserId or targetPhone)
 app.post('/api/chats', async (req, res) => {
   try {
-    const { currentUserId, targetUserId } = req.body;
-    if (!currentUserId || !targetUserId) {
-      return res.status(400).json({ error: 'currentUserId and targetUserId required' });
+    const { currentUserId, targetUserId, targetPhone, targetName } = req.body;
+    if (!currentUserId) {
+      return res.status(400).json({ error: 'currentUserId required' });
+    }
+
+    let targetId = targetUserId;
+
+    // Auto-create target user if phone number was entered directly
+    if (!targetId && targetPhone) {
+      const cleanPhone = targetPhone.trim();
+      let targetUser = await prisma.user.findUnique({ where: { phone: cleanPhone } });
+      if (!targetUser) {
+        targetUser = await prisma.user.create({
+          data: {
+            phone: cleanPhone,
+            name: targetName || `User ${cleanPhone.slice(-4)}`,
+            isGuest: false,
+          },
+        });
+      }
+      targetId = targetUser.id;
+    }
+
+    if (!targetId) {
+      return res.status(400).json({ error: 'targetUserId or targetPhone is required' });
     }
 
     const existingChat = await prisma.chat.findFirst({
@@ -350,7 +372,7 @@ app.post('/api/chats', async (req, res) => {
         isGroup: false,
         AND: [
           { participants: { some: { userId: currentUserId } } },
-          { participants: { some: { userId: targetUserId } } },
+          { participants: { some: { userId: targetId } } },
         ],
       },
       include: {
@@ -376,7 +398,7 @@ app.post('/api/chats', async (req, res) => {
       data: {
         isGroup: false,
         participants: {
-          create: [{ userId: currentUserId }, { userId: targetUserId }],
+          create: [{ userId: currentUserId }, { userId: targetId }],
         },
       },
       include: {
@@ -581,11 +603,17 @@ io.on('connection', (socket) => {
     socket.to(chatId).emit('user_stop_typing', { chatId, userId });
   });
 
-  socket.on('send_message', async ({ chatId, senderId, content, type, mediaUrl, duration }) => {
+  socket.on('send_message', async ({ chatId, senderId, content, type, mediaUrl, duration }, callback) => {
     try {
-      await createAndBroadcastMessage({ chatId, senderId, content, type, mediaUrl, duration });
+      const msg = await createAndBroadcastMessage({ chatId, senderId, content, type, mediaUrl, duration });
+      if (typeof callback === 'function') {
+        callback({ success: true, message: msg });
+      }
     } catch (err) {
       console.error('Error handling send_message:', err);
+      if (typeof callback === 'function') {
+        callback({ success: false, error: err.message });
+      }
     }
   });
 
